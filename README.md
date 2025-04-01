@@ -11,6 +11,3 @@ Instructions to run website:
 3. npm run dev
 4. copy the values of .env.template and make .env
 
-# fyp-website
-# fyp-website
-# fyp-website
