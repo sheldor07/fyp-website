@@ -1,2 +1,45 @@
 @import "tailwindcss";
 
+@layer base {
+  :root {
+    --font-poppins: 'Poppins', sans-serif;
+  }
+  
+  body {
+    @apply bg-slate-50;
+  }
+}
+
+@layer components {
+  .project-card {
+    @apply border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-all;
+  }
+  
+  .badge {
+    @apply text-xs font-medium px-2.5 py-1 rounded-full;
+  }
+  
+  .badge-blue {
+    @apply bg-indigo-100 text-indigo-800;
+  }
+  
+  .badge-gray {
+    @apply bg-slate-100 text-slate-800;
+  }
+  
+  .badge-green {
+    @apply bg-emerald-100 text-emerald-800;
+  }
+  
+  .btn {
+    @apply px-4 py-2 rounded-lg transition-all;
+  }
+  
+  .btn-primary {
+    @apply bg-indigo-600 text-white hover:bg-indigo-700;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-100 text-gray-700 hover:bg-gray-200;
+  }
+}
