@@ -20,6 +20,7 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
+import posthog from "posthog-js";
 
 // Data for dropdowns
 const supervisors = [
@@ -369,6 +370,17 @@ export default function ProjectSearch() {
         params.set("query", `${params.get("query")} ${keywordQuery}`);
       }
 
+      // Capture search event with PostHog
+      posthog.capture('project_search', {
+        query: query.trim(),
+        category: category || null,
+        type: type || null,
+        supervisor: supervisor || null,
+        isJointOrURECA: isJointOrURECA,
+        selectedKeywords: selectedKeywords,
+        topK: topK
+      });
+
       // Call API
       const response = await fetch(`/api/projects/search?${params.toString()}`);
       const data = await response.json();
@@ -436,6 +448,11 @@ export default function ProjectSearch() {
     // Set hasSearched to true immediately
     setHasSearched(true);
 
+    // Capture event for clicking a recent search
+    posthog.capture('recent_search_click', {
+      query: searchQuery
+    });
+
     // Create a mock event
     const e = { preventDefault: () => {} };
 
@@ -466,6 +483,18 @@ export default function ProjectSearch() {
           const keywordQuery = selectedKeywords.join(" ");
           params.set("query", `${params.get("query")} ${keywordQuery}`);
         }
+
+        // Capture search event with PostHog
+        posthog.capture('project_search', {
+          query: searchQuery.trim(),
+          category: category || null,
+          type: type || null,
+          supervisor: supervisor || null,
+          isJointOrURECA: isJointOrURECA,
+          selectedKeywords: selectedKeywords,
+          topK: topK,
+          source: 'recent_search'
+        });
 
         // Call API
         const response = await fetch(
@@ -509,20 +538,40 @@ export default function ProjectSearch() {
   };
 
   const handleSort = (key) => {
+    const newDirection = sortBy === key 
+      ? (sortDirection === "asc" ? "desc" : "asc")
+      : "desc";
+      
+    // Track sort event
+    posthog.capture('result_sort', {
+      sortBy: key,
+      sortDirection: newDirection
+    });
+    
     if (sortBy === key) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+      setSortDirection(newDirection);
     } else {
       setSortBy(key);
-      setSortDirection("desc");
+      setSortDirection(newDirection);
     }
   };
 
   // Toggle shortlist
   const toggleShortlist = (projectNo) => {
-    if (shortlist.includes(projectNo)) {
+    const isRemoving = shortlist.includes(projectNo);
+    
+    if (isRemoving) {
       setShortlist(shortlist.filter((id) => id !== projectNo));
+      // Track removal from shortlist
+      posthog.capture('shortlist_remove', {
+        projectNo: projectNo
+      });
     } else {
       setShortlist([...shortlist, projectNo]);
+      // Track addition to shortlist
+      posthog.capture('shortlist_add', {
+        projectNo: projectNo
+      });
     }
   };
 
