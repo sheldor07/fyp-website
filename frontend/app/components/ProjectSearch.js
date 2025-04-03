@@ -394,7 +394,7 @@ export default function ProjectSearch() {
                         type="text"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search projects (AI, blockchain, vision...)"
+                        placeholder="Search projects (AI, blockchain, vision, I want to break into finance, I am interested in computer security...)"
                         className="w-full p-3 pl-10 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
                       />
                       <Search className="absolute left-3 top-3.5 text-gray-400" size={18} />
