@@ -191,7 +191,7 @@ export default function ProjectSearch() {
   const [type, setType] = useState("");
   const [supervisor, setSupervisor] = useState("");
   const [isJointOrURECA, setIsJointOrURECA] = useState(false);
-  const [topK, setTopK] = useState(50);
+  const [topK, setTopK] = useState(100);
   const [selectedKeywords, setSelectedKeywords] = useState([]);
   const [keywordInput, setKeywordInput] = useState("");
   const [filteredKeywords, setFilteredKeywords] = useState([]);
@@ -614,7 +614,7 @@ export default function ProjectSearch() {
                         type="text"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search projects (AI, blockchain, vision...)"
+                        placeholder="Search projects (AI, blockchain, vision, I want to break into finance, I am interested in computer security...)"
                         className="w-full p-3 pl-10 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
                       />
                       <Search
@@ -1105,8 +1105,7 @@ export default function ProjectSearch() {
                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
                   <div>
                     <h2 className="text-lg sm:text-xl font-semibold text-gray-800">
-                      Showing {getPaginatedResults().length} of {results.length}{" "}
-                      projects
+                      Showing {getPaginatedResults().length} of {results.length} top matched projects
                     </h2>
                     {query.trim() !== "" &&
                       results.filter((p) => p.score >= 0.5).length === 0 && (
