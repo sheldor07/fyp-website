@@ -5,11 +5,11 @@ from pinecone import Pinecone
 from openai import OpenAI
 
 # Load environment variables
-OPENAI_API_KEY = "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"
-PINECONE_API_KEY = "pcsk_56JdY2_GHvUGeDrVdvR3TCDKDrNCPSCW4onfQg2J7zaZw8Lsny41skMmgRdgipZdoPEyER"
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
 PINECONE_ENVIRONMENT = os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
-INDEX_NAME = "project-finder-index"
-EMBEDDING_MODEL = "text-embedding-ada-002"
+INDEX_NAME = os.environ["INDEX_NAME"]
+EMBEDDING_MODEL = os.environ["EMBEDDING_MODEL"]
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)

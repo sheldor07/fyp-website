@@ -63,13 +63,16 @@ export default function ProjectSearch() {
   const [type, setType] = useState('');
   const [supervisor, setSupervisor] = useState('');
   const [isJointOrURECA, setIsJointOrURECA] = useState(false);
-  const [topK, setTopK] = useState(20);
+  const [topK, setTopK] = useState(50);
   const [selectedKeywords, setSelectedKeywords] = useState([]);
   const [keywordInput, setKeywordInput] = useState('');
   const [filteredKeywords, setFilteredKeywords] = useState([]);
   
   // UI state
   const [isSupervisorDropdownOpen, setIsSupervisorDropdownOpen] = useState(false);
+  const [filteredSupervisors, setFilteredSupervisors] = useState(supervisors);
+  const [supervisorSearch, setSupervisorSearch] = useState('');
+  
   const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const [isKeywordDropdownOpen, setIsKeywordDropdownOpen] = useState(false);
@@ -80,16 +83,20 @@ export default function ProjectSearch() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [sortBy, setSortBy] = useState('score');
-  const [sortDirection, setSortDirection] = useState('desc');
+  const [sortBy, setSortBy] = useState('projectNo');
+  const [sortDirection, setSortDirection] = useState('asc');
+  const [hasSearched, setHasSearched] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [recentSearches, setRecentSearches] = useState([]);
+  const [usingSemantic, setUsingSemantic] = useState(true);
+  const [initialFetch, setInitialFetch] = useState(true);
+  const [totalCount, setTotalCount] = useState(0);
   
   // Shortlist state
   const [shortlist, setShortlist] = useState([]);
   const [showShortlist, setShowShortlist] = useState(false);
   
-  const resultsPerPage = 5;
+  const resultsPerPage = 10;
   const supervisorRef = useRef(null);
   const categoryRef = useRef(null);
   const typeRef = useRef(null);
@@ -106,6 +113,18 @@ export default function ProjectSearch() {
       setFilteredKeywords([]);
     }
   }, [keywordInput, selectedKeywords]);
+
+  // Filter supervisors based on search input
+  useEffect(() => {
+    if (supervisorSearch) {
+      const filtered = supervisors.filter(
+        s => s.toLowerCase().includes(supervisorSearch.toLowerCase())
+      );
+      setFilteredSupervisors(filtered);
+    } else {
+      setFilteredSupervisors(supervisors);
+    }
+  }, [supervisorSearch]);
 
   // Count active filters
   useEffect(() => {
@@ -140,6 +159,47 @@ export default function ProjectSearch() {
     };
   }, []);
 
+  // Initial load of all projects
+  useEffect(() => {
+    if (initialFetch) {
+      const fetchInitialProjects = async () => {
+        setLoading(true);
+        try {
+          // Build query parameters for initial load
+          const params = new URLSearchParams({
+            initial: 'true',
+            top: topK.toString()
+          });
+          
+          // Call API
+          const response = await fetch(`/api/projects/search?${params.toString()}`);
+          const data = await response.json();
+          
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed to load projects');
+          }
+          
+          setResults(data.results || []);
+          setTotalCount(data.total || data.results.length);
+          setUsingSemantic(data.usingSemantic);
+          setCurrentPage(1);
+          
+          // For initial load, ensure sort is by project number
+          setSortBy('projectNo');
+          setSortDirection('asc');
+          setHasSearched(false);
+        } catch (err) {
+          setError(err.message || 'An error occurred loading projects');
+        } finally {
+          setLoading(false);
+          setInitialFetch(false);
+        }
+      };
+      
+      fetchInitialProjects();
+    }
+  }, [initialFetch, topK]);
+
   // Load recent searches from local storage
   useEffect(() => {
     const savedSearches = localStorage.getItem('recentSearches');
@@ -151,11 +211,6 @@ export default function ProjectSearch() {
   // Search handler - connected to the API
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
-    
-    if (!query.trim()) {
-      setError('Please enter a search query');
-      return;
-    }
     
     setLoading(true);
     setError(null);
@@ -187,13 +242,28 @@ export default function ProjectSearch() {
       }
       
       setResults(data.results || []);
+      setTotalCount(data.total || data.results.length);
+      setUsingSemantic(data.usingSemantic);
       setCurrentPage(1);
       
-      // Save to recent searches
-      const newSearch = { query, timestamp: new Date().toISOString() };
-      const updatedSearches = [newSearch, ...recentSearches.filter(s => s.query !== query)].slice(0, 5);
-      setRecentSearches(updatedSearches);
-      localStorage.setItem('recentSearches', JSON.stringify(updatedSearches));
+      // Set hasSearched to true if there was a query
+      if (query.trim()) {
+        setHasSearched(true);
+        // For search results, default sort to relevance
+        setSortBy('score');
+        setSortDirection('desc');
+        
+        // Save to recent searches
+        const newSearch = { query, timestamp: new Date().toISOString() };
+        const updatedSearches = [newSearch, ...recentSearches.filter(s => s.query !== query)].slice(0, 5);
+        setRecentSearches(updatedSearches);
+        localStorage.setItem('recentSearches', JSON.stringify(updatedSearches));
+      } else {
+        // For initial load or empty query, default sort by project number
+        setHasSearched(false);
+        setSortBy('projectNo');
+        setSortDirection('asc');
+      }
     } catch (err) {
       setError(err.message || 'An error occurred during search');
     } finally {
@@ -223,6 +293,8 @@ export default function ProjectSearch() {
 
   const handleRecentSearchClick = (searchQuery) => {
     setQuery(searchQuery);
+    // Set hasSearched to true immediately
+    setHasSearched(true);
     // Auto-search when clicking a recent search
     setTimeout(() => {
       const e = { preventDefault: () => {} };
@@ -250,7 +322,12 @@ export default function ProjectSearch() {
 
   // Get paginated and sorted results
   const getPaginatedResults = () => {
-    const sortedResults = [...results].sort((a, b) => {
+    // First filter out low similarity projects if we're searching
+    const filteredResults = query.trim() !== '' 
+      ? results.filter(project => project.score >= 0.3) 
+      : results;
+    
+    const sortedResults = [...filteredResults].sort((a, b) => {
       if (sortBy === 'title') {
         return sortDirection === 'asc' 
           ? a.title.localeCompare(b.title) 
@@ -260,6 +337,11 @@ export default function ProjectSearch() {
         return sortDirection === 'asc' 
           ? a.supervisor.localeCompare(b.supervisor) 
           : b.supervisor.localeCompare(a.supervisor);
+      }
+      if (sortBy === 'projectNo') {
+        return sortDirection === 'asc'
+          ? a.projectNo.localeCompare(b.projectNo)
+          : b.projectNo.localeCompare(a.projectNo);
       }
       return sortDirection === 'asc' ? a.score - b.score : b.score - a.score;
     });
@@ -271,46 +353,62 @@ export default function ProjectSearch() {
   // Filter projects for shortlist view
   const shortlistedProjects = results.filter(project => shortlist.includes(project.projectNo));
 
-  const totalPages = Math.ceil(results.length / resultsPerPage);
+  const totalPages = Math.ceil((query.trim() !== '' ? results.filter(p => p.score >= 0.5).length : results.length) / resultsPerPage);
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans">
+    <div className="min-h-screen bg-slate-50 font-sans text-sm sm:text-base">
       {/* Header */}
-      <header className="bg-gradient-to-r from-indigo-700 via-purple-700 to-pink-700 text-white p-5 shadow-lg">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+      <header className="bg-gradient-to-r from-indigo-700 via-purple-700 to-pink-700 text-white p-4 shadow-lg">
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">NTU CCDS FYP Search</h1>
-            <p className="text-sm mt-1 text-indigo-100 font-light">2025-2026 Final Year Project Selection</p>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight">NTU CCDS FYP Search</h1>
+            <p className="text-xs sm:text-sm mt-1 text-indigo-100 font-light">2025-2026 Final Year Project Selection</p>
           </div>
-          
-          <button 
-            onClick={() => setShowShortlist(!showShortlist)} 
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-full transition-all self-start"
-          >
-            {showShortlist ? <Eye size={18} /> : <BookmarkCheck size={18} />}
-            {showShortlist ? 'View All Projects' : `My Shortlist (${shortlist.length})`}
+          <div className="flex sm:items-center items-end gap-2">
+            <button 
+              onClick={() => setShowShortlist(!showShortlist)} 
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 sm:px-4 py-2 rounded-full transition-all self-start"
+            >
+              {showShortlist ? <Eye size={18} /> : <BookmarkCheck size={18} />}
+            <span className="hidden sm:inline">
+              {showShortlist ? 'View All Projects' : `My Shortlist (${shortlist.length})`}
+            </span>
+            {/* Only show count on mobile */}
+            {!showShortlist && <span className="sm:hidden text-xs">{shortlist.length}</span>}
+
           </button>
+          </div>
         </div>
       </header>
       
-      <main className="max-w-6xl mx-auto p-4 md:p-6">
+      <main className="max-w-6xl mx-auto sm:p-4 p-1">
         {!showShortlist && (
           <>
             {/* Search Form */}
-            <div className="bg-white rounded-xl shadow-md p-6 mb-6 border border-gray-100">
+            <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 mb-6 border border-gray-100">
               <form onSubmit={handleSearch} className="space-y-4">
-                <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex flex-col gap-4">
                   <div className="flex-1">
                     <div className="relative">
                       <input
                         type="text"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search for projects (e.g., artificial intelligence, blockchain, computer vision...)"
-                        className="w-full p-3 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
-                        required
+                        placeholder="Search projects (AI, blockchain, vision...)"
+                        className="w-full p-3 pl-10 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
                       />
                       <Search className="absolute left-3 top-3.5 text-gray-400" size={18} />
+
+                      <button
+                        type="submit"
+                        className="absolute right-2 top-2 px-2 sm:px-4 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all disabled:bg-indigo-300 flex items-center text-sm"
+                        disabled={loading}
+                      >
+                        <Search size={16} className={loading ? "animate-pulse" : ""} />
+                        <span className="hidden sm:inline ml-1">
+                          {loading ? 'Searching' : 'Search'}
+                        </span>
+                      </button>
                     </div>
                     
                     {recentSearches.length > 0 && (
@@ -332,27 +430,19 @@ export default function ProjectSearch() {
                     )}
                   </div>
                   
-                  <div className="flex gap-2">
+                  <div className="flex">
                     <button
                       type="button"
                       onClick={() => setShowFilters(!showFilters)}
-                      className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all"
+                      className="flex items-center justify-center w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all text-sm"
                     >
-                      <Filter size={18} className="mr-1" />
-                      Filters
+                      <Filter size={16} className="mr-1" />
+                      {showFilters ? 'Hide Filters' : 'Show Filters'}
                       {activeFilters > 0 && (
                         <span className="ml-2 px-2 py-0.5 bg-indigo-500 text-white text-xs rounded-full">
                           {activeFilters}
                         </span>
                       )}
-                    </button>
-                    
-                    <button
-                      type="submit"
-                      className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all disabled:bg-indigo-300"
-                      disabled={loading}
-                    >
-                      {loading ? 'Searching...' : 'Search'}
                     </button>
                   </div>
                 </div>
@@ -378,7 +468,7 @@ export default function ProjectSearch() {
                       )}
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                       {/* Supervisor dropdown */}
                       <div ref={supervisorRef} className="relative">
                         <label htmlFor="supervisor" className="block mb-1 text-sm font-medium text-gray-700">
@@ -397,33 +487,36 @@ export default function ProjectSearch() {
                         {isSupervisorDropdownOpen && (
                           <div className="absolute z-10 w-full max-h-60 overflow-y-auto bg-white border border-gray-300 rounded-lg mt-1 shadow-lg">
                             <div className="sticky top-0 bg-white p-2 border-b">
-                              <input
-                                type="text"
-                                placeholder="Search supervisors..."
-                                className="w-full p-2 border border-gray-300 rounded"
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={(e) => {
-                                  const val = e.target.value.toLowerCase();
-                                  // This would filter the list in a real implementation
-                                }}
-                              />
+                              <div className="relative">
+                                <Search className="absolute left-2 top-2.5 text-gray-400" size={14} />
+                                <input
+                                  type="text"
+                                  placeholder="Search supervisors..."
+                                  className="w-full p-2 pl-7 border border-gray-300 rounded"
+                                  value={supervisorSearch}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => setSupervisorSearch(e.target.value)}
+                                />
+                              </div>
                             </div>
                             <div className="p-1">
                               <div 
                                 className="p-2 hover:bg-gray-100 cursor-pointer rounded"
                                 onClick={() => {
                                   setSupervisor('');
+                                  setSupervisorSearch('');
                                   setIsSupervisorDropdownOpen(false);
                                 }}
                               >
                                 None
                               </div>
-                              {supervisors.map((s, index) => (
+                              {filteredSupervisors.map((s, index) => (
                                 <div 
                                   key={index}
                                   className="p-2 hover:bg-gray-100 cursor-pointer rounded"
                                   onClick={() => {
                                     setSupervisor(s);
+                                    setSupervisorSearch('');
                                     setIsSupervisorDropdownOpen(false);
                                   }}
                                 >
@@ -598,7 +691,7 @@ export default function ProjectSearch() {
             {error && (
               <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded">
                 <div className="flex items-center">
-                  <Info size={20} className="mr-2" />
+                  <Info size={20} className="mr-2 flex-shrink-0" />
                   <p>{error}</p>
                 </div>
               </div>
@@ -613,176 +706,278 @@ export default function ProjectSearch() {
             
             {/* Results */}
             {results.length > 0 && !loading && (
-              <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-semibold text-gray-800">
-                    Found {results.length} projects
-                  </h2>
+              <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-semibold text-gray-800">
+                      Showing {getPaginatedResults().length} of {results.length} projects
+                    </h2>
+                    {query.trim() !== '' && results.filter(p => p.score >= 0.5).length === 0 && (
+                      <div className="text-red-600 text-sm flex items-center mt-1">
+                        <AlertCircle size={14} className="mr-1 flex-shrink-0" />
+                        No projects with sufficient relevance found
+                      </div>
+                    )}
+                  </div>
                   
-                  <div className="flex items-center">
-                    <span className="text-sm text-gray-500 mr-2">Sort by:</span>
-                    <div className="flex rounded-lg overflow-hidden border border-gray-300">
-                      <button
-                        type="button"
-                        className={`px-3 py-1.5 text-sm font-medium ${
-                          sortBy === 'score' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
-                        }`}
-                        onClick={() => handleSort('score')}
-                      >
-                        Relevance {sortBy === 'score' && (sortDirection === 'desc' ? '↓' : '↑')}
-                      </button>
-                      <button
-                        type="button"
-                        className={`px-3 py-1.5 text-sm font-medium border-l border-gray-300 ${
-                          sortBy === 'title' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
-                        }`}
-                        onClick={() => handleSort('title')}
-                      >
-                        Title {sortBy === 'title' && (sortDirection === 'desc' ? '↓' : '↑')}
-                      </button>
-                      <button
-                        type="button"
-                        className={`px-3 py-1.5 text-sm font-medium border-l border-gray-300 ${
-                          sortBy === 'supervisor' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
-                        }`}
-                        onClick={() => handleSort('supervisor')}
-                      >
-                        Supervisor {sortBy === 'supervisor' && (sortDirection === 'desc' ? '↓' : '↑')}
-                      </button>
+                  <div className="overflow-x-auto">
+                    <div className="flex items-center">
+                      <span className="text-sm text-gray-500 mr-2 whitespace-nowrap">Sort by:</span>
+                      <div className="flex rounded-lg overflow-hidden border border-gray-300">
+                        <button
+                          type="button"
+                          className={`px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium ${
+                            sortBy === 'projectNo' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          onClick={() => handleSort('projectNo')}
+                        >
+                          Project# {sortBy === 'projectNo' && (sortDirection === 'asc' ? '↑' : '↓')}
+                        </button>
+                        <button
+                          type="button"
+                          className={`px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium border-l border-gray-300 ${
+                            sortBy === 'score' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          onClick={() => handleSort('score')}
+                        >
+                          Relevance {sortBy === 'score' && (sortDirection === 'desc' ? '↓' : '↑')}
+                        </button>
+                        <button
+                          type="button"
+                          className={`px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium border-l border-gray-300 ${
+                            sortBy === 'title' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          onClick={() => handleSort('title')}
+                        >
+                          Title {sortBy === 'title' && (sortDirection === 'desc' ? '↓' : '↑')}
+                        </button>
+                        <button
+                          type="button"
+                          className={`px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium border-l border-gray-300 ${
+                            sortBy === 'supervisor' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          onClick={() => handleSort('supervisor')}
+                        >
+                          Sup. {sortBy === 'supervisor' && (sortDirection === 'desc' ? '↓' : '↑')}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
                   
-                <div className="space-y-6">
-                  {getPaginatedResults().map((project) => (
-                    <div 
-                      key={project.projectNo} 
-                      className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-all"
-                    >
-                      <div className="p-5">
-                        <div className="flex justify-between items-start">
-                          <h3 className="text-lg font-semibold text-indigo-700 mb-1 pr-20">
-                            {project.title}
-                          </h3>
-                          <div className="flex items-center space-x-2">
-                            <button 
-                              type="button"
-                              onClick={() => toggleShortlist(project.projectNo)}
-                              className={`h-8 w-8 rounded-full flex items-center justify-center ${
-                                shortlist.includes(project.projectNo) 
-                                  ? 'bg-pink-100 text-pink-600' 
-                                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                              }`}
-                            >
-                              {shortlist.includes(project.projectNo) ? 
-                                <BookmarkCheck size={18} /> : 
-                                <Bookmark size={18} />}
-                            </button>
-                            <span className="bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-1.5 rounded-full flex items-center">
-                              <Award className="mr-1" size={12} />
-                              Score: {project.score.toFixed(2)}
-                            </span>
+                <div className="space-y-5">
+                  {getPaginatedResults().length > 0 ? (
+                    getPaginatedResults().map((project) => {
+                      // Check if the project has a score below 0.5 (50%) and is not an initial load
+                      const lowSimilarity = project.score < 0.5 && query.trim() !== '';
+                      
+                      return (
+                        <div 
+                          key={project.projectNo} 
+                          className={`border rounded-xl overflow-hidden hover:shadow-md transition-all ${
+                            lowSimilarity ? 'border-orange-200 bg-orange-50' : 'border-gray-200'
+                          }`}
+                        >
+                          <div className="p-4">
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 sm:gap-0">
+                              <h3 className="text-base sm:text-lg font-semibold text-indigo-700 mb-1 sm:pr-20 pr-0">
+                                {project.title}
+                              </h3>
+                              <div className="flex items-center space-x-2">
+                                <button 
+                                  type="button"
+                                  onClick={() => toggleShortlist(project.projectNo)}
+                                  className={`h-8 w-8 rounded-full flex items-center justify-center ${
+                                    shortlist.includes(project.projectNo) 
+                                      ? 'bg-pink-100 text-pink-600' 
+                                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                  }`}
+                                >
+                                  {shortlist.includes(project.projectNo) ? 
+                                    <BookmarkCheck size={18} /> : 
+                                    <Bookmark size={18} />}
+                                </button>
+                                <span className="bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-1.5 rounded-full flex items-center">
+                                  <Award className="mr-1" size={12} />
+                                  {(project.score * 100).toFixed(0)}% Match
+                                </span>
+                              </div>
+                            </div>
+                            
+                            {/* Low similarity warning */}
+                            {lowSimilarity && (
+                              <div className="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-3 rounded my-3 text-sm">
+                                <div className="flex items-center">
+                                  <AlertCircle size={16} className="mr-2 flex-shrink-0" />
+                                  <p>This project has low similarity to your search. Try another search term for better results.</p>
+                                </div>
+                              </div>
+                            )}
+                            
+                            <div className="text-sm text-gray-500 mb-3 flex flex-wrap gap-2 sm:gap-4">
+                              <span className="flex items-center">
+                                <FileText size={14} className="mr-1 flex-shrink-0" />
+                                {project.projectNo}
+                              </span>
+                              <span className="flex items-center">
+                                <User size={14} className="mr-1 flex-shrink-0" />
+                                <span className="truncate">{project.supervisor}</span>
+                              </span>
+                            </div>
+                            
+                            {/* Summary - always visible */}
+                            <div className="mt-2 mb-4 text-gray-700 text-sm bg-slate-50 p-3 rounded-lg border border-slate-100">
+                              <h4 className="font-medium mb-1">Project Summary:</h4>
+                              <p>{project.summary}</p>
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-2 mb-3">
+                              <span className="bg-slate-100 text-slate-800 text-xs px-2.5 py-1 rounded-full">
+                                {project.category}
+                              </span>
+                              <span className="bg-slate-100 text-slate-800 text-xs px-2.5 py-1 rounded-full">
+                                {project.type}
+                              </span>
+                              {project.isJointOrURECA !== "No" && (
+                                <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full">
+                                  Joint/URECA
+                                </span>
+                              )}
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-1.5">
+                              {project.keywords && project.keywords.map((keyword, idx) => (
+                                <span 
+                                  key={idx} 
+                                  className="bg-indigo-50 text-indigo-600 text-xs px-2.5 py-1 rounded-full"
+                                >
+                                  <Tag size={10} className="inline mr-1" />
+                                  {keyword}
+                                </span>
+                              ))}
+                            </div>
+                            
+                            <div className="flex justify-end mt-4">
+                              <button
+                                type="button"
+                                onClick={() => toggleShortlist(project.projectNo)}
+                                className={`text-sm flex items-center ${
+                                  shortlist.includes(project.projectNo) 
+                                    ? 'text-pink-600 hover:text-pink-800' 
+                                    : 'text-gray-600 hover:text-gray-800'
+                                }`}
+                              >
+                                {shortlist.includes(project.projectNo) ? (
+                                  <>Remove from shortlist</>
+                                ) : (
+                                  <>Add to shortlist</>
+                                )}
+                              </button>
+                            </div>
                           </div>
                         </div>
-                        
-                        <div className="text-sm text-gray-500 mb-3 flex gap-4">
-                          <span className="flex items-center">
-                            <FileText size={14} className="mr-1" />
-                            {project.projectNo}
-                          </span>
-                          <span className="flex items-center">
-                            <User size={14} className="mr-1" />
-                            {project.supervisor}
-                          </span>
-                        </div>
-                        
-                        {/* Summary - always visible */}
-                        <div className="mt-2 mb-4 text-gray-700 text-sm bg-slate-50 p-4 rounded-lg border border-slate-100">
-                          <h4 className="font-medium mb-1">Project Summary:</h4>
-                          <p>{project.summary}</p>
-                        </div>
-                        
-                        <div className="flex flex-wrap gap-2 mb-3">
-                          <span className="bg-slate-100 text-slate-800 text-xs px-2.5 py-1 rounded-full">
-                            {project.category}
-                          </span>
-                          <span className="bg-slate-100 text-slate-800 text-xs px-2.5 py-1 rounded-full">
-                            {project.type}
-                          </span>
-                          {project.isJointOrURECA !== "No" && (
-                            <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full">
-                              Joint/URECA
-                            </span>
-                          )}
-                        </div>
-                        
-                        <div className="flex flex-wrap gap-1.5">
-                          {project.keywords && project.keywords.map((keyword, idx) => (
-                            <span 
-                              key={idx} 
-                              className="bg-indigo-50 text-indigo-600 text-xs px-2.5 py-1 rounded-full"
-                            >
-                              <Tag size={10} className="inline mr-1" />
-                              {keyword}
-                            </span>
-                          ))}
-                        </div>
-                        
-                        <div className="flex justify-end mt-4">
-                          <button
-                            type="button"
-                            onClick={() => toggleShortlist(project.projectNo)}
-                            className={`text-sm flex items-center ${
-                              shortlist.includes(project.projectNo) 
-                                ? 'text-pink-600 hover:text-pink-800' 
-                                : 'text-gray-600 hover:text-gray-800'
-                            }`}
-                          >
-                            {shortlist.includes(project.projectNo) ? (
-                              <>Remove from shortlist</>
-                            ) : (
-                              <>Add to shortlist</>
-                            )}
-                          </button>
-                        </div>
+                      );
+                    })
+                  ) : (
+                    // No results after filtering by low similarity
+                    <div className="bg-white rounded-lg p-8 text-center border border-gray-200">
+                      <div className="flex flex-col items-center">
+                        <Search size={36} className="text-gray-300 mb-3" />
+                        <h3 className="text-lg font-medium text-gray-700 mb-2">No relevant projects found</h3>
+                        <p className="text-gray-500 max-w-md mx-auto">
+                          We couldn't find any projects with sufficient relevance to your search. Try different keywords or adjust your filters.
+                        </p>
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
                 
                 {/* Pagination */}
                 {totalPages > 1 && (
-                  <div className="flex justify-center mt-8">
+                  <div className="flex justify-center mt-8 overflow-x-auto">
                     <nav className="flex items-center space-x-1">
                       <button
                         type="button"
                         onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                         disabled={currentPage === 1}
-                        className="px-4 py-2 rounded-md border bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                        className="px-2 sm:px-4 py-2 rounded-md border bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 text-sm"
                       >
-                        Previous
+                        Prev
                       </button>
                       
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                        <button
-                          key={page}
-                          type="button"
-                          onClick={() => setCurrentPage(page)}
-                          className={`px-4 py-2 rounded-md border ${
-                            currentPage === page
-                              ? 'bg-indigo-600 text-white border-indigo-600'
-                              : 'bg-white text-gray-700 hover:bg-gray-50'
-                          }`}
-                        >
-                          {page}
-                        </button>
-                      ))}
+                      {/* First page */}
+                      {currentPage > 3 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage(1)}
+                            className="px-3 sm:px-4 py-2 rounded-md border bg-white text-gray-700 hover:bg-gray-50 text-sm"
+                          >
+                            1
+                          </button>
+                          
+                          {currentPage > 4 && (
+                            <span className="px-1 sm:px-2 py-1 text-gray-500">...</span>
+                          )}
+                        </>
+                      )}
+                      
+                      {/* Pages around current page */}
+                      {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                        let pageNum;
+                        if (currentPage <= 3) {
+                          // At the beginning
+                          pageNum = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          // At the end
+                          pageNum = totalPages - 4 + i;
+                        } else {
+                          // In the middle
+                          pageNum = currentPage - 2 + i;
+                        }
+                        
+                        // Only display pages within range
+                        if (pageNum > 0 && pageNum <= totalPages) {
+                          return (
+                            <button
+                              key={pageNum}
+                              type="button"
+                              onClick={() => setCurrentPage(pageNum)}
+                              className={`px-3 sm:px-4 py-2 rounded-md border text-sm ${
+                                currentPage === pageNum
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        }
+                        return null;
+                      }).filter(Boolean)}
+                      
+                      {/* Last page */}
+                      {currentPage < totalPages - 2 && (
+                        <>
+                          {currentPage < totalPages - 3 && (
+                            <span className="px-1 sm:px-2 py-1 text-gray-500">...</span>
+                          )}
+                          
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage(totalPages)}
+                            className="px-3 sm:px-4 py-2 rounded-md border bg-white text-gray-700 hover:bg-gray-50 text-sm"
+                          >
+                            {totalPages}
+                          </button>
+                        </>
+                      )}
                       
                       <button
                         type="button"
                         onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                         disabled={currentPage === totalPages}
-                        className="px-4 py-2 rounded-md border bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                        className="px-2 sm:px-4 py-2 rounded-md border bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 text-sm"
                       >
                         Next
                       </button>
@@ -793,7 +988,7 @@ export default function ProjectSearch() {
             )}
             
             {results.length === 0 && !loading && query && !error && (
-              <div className="bg-white rounded-lg shadow-md p-12 text-center">
+              <div className="bg-white rounded-lg shadow-md p-6 sm:p-12 text-center">
                 <div className="flex flex-col items-center">
                   <Search size={48} className="text-gray-300 mb-4" />
                   <h3 className="text-xl font-medium text-gray-700 mb-2">No projects found</h3>
@@ -808,7 +1003,7 @@ export default function ProjectSearch() {
         
         {/* Shortlist View */}
         {showShortlist && (
-          <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100 mt-6">
+          <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100 mt-2 sm:mt-6">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold text-gray-800 flex items-center">
                 <BookmarkCheck size={20} className="mr-2 text-pink-600" />
@@ -828,7 +1023,7 @@ export default function ProjectSearch() {
             </div>
             
             {shortlist.length === 0 ? (
-              <div className="p-12 text-center">
+              <div className="p-8 sm:p-12 text-center">
                 <div className="flex flex-col items-center">
                   <AlertCircle size={48} className="text-gray-300 mb-4" />
                   <h3 className="text-xl font-medium text-gray-700 mb-2">No projects shortlisted</h3>
@@ -845,15 +1040,15 @@ export default function ProjectSearch() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-5">
                 {results.filter(project => shortlist.includes(project.projectNo)).map((project) => (
                   <div 
                     key={project.projectNo} 
                     className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-all"
                   >
-                    <div className="p-5">
-                      <div className="flex justify-between items-start">
-                        <h3 className="text-lg font-semibold text-indigo-700 mb-1 pr-20">
+                    <div className="p-4 sm:p-5">
+                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 sm:gap-0">
+                        <h3 className="text-base sm:text-lg font-semibold text-indigo-700 mb-1 sm:pr-20 pr-0">
                           {project.title}
                         </h3>
                         <div className="flex items-center space-x-2">
@@ -871,19 +1066,19 @@ export default function ProjectSearch() {
                         </div>
                       </div>
                       
-                      <div className="text-sm text-gray-500 mb-3 flex gap-4">
+                      <div className="text-sm text-gray-500 mb-3 flex flex-wrap gap-2 sm:gap-4">
                         <span className="flex items-center">
-                          <FileText size={14} className="mr-1" />
+                          <FileText size={14} className="mr-1 flex-shrink-0" />
                           {project.projectNo}
                         </span>
                         <span className="flex items-center">
-                          <User size={14} className="mr-1" />
-                          {project.supervisor}
+                          <User size={14} className="mr-1 flex-shrink-0" />
+                          <span className="truncate">{project.supervisor}</span>
                         </span>
                       </div>
                       
                       {/* Summary */}
-                      <div className="mt-2 mb-4 text-gray-700 text-sm bg-slate-50 p-4 rounded-lg border border-slate-100">
+                      <div className="mt-2 mb-4 text-gray-700 text-sm bg-slate-50 p-3 sm:p-4 rounded-lg border border-slate-100">
                         <h4 className="font-medium mb-1">Project Summary:</h4>
                         <p>{project.summary}</p>
                       </div>
