@@ -63,7 +63,7 @@ export default function ProjectSearch() {
   const [type, setType] = useState('');
   const [supervisor, setSupervisor] = useState('');
   const [isJointOrURECA, setIsJointOrURECA] = useState(false);
-  const [topK, setTopK] = useState(50);
+  const [topK, setTopK] = useState(100);
   const [selectedKeywords, setSelectedKeywords] = useState([]);
   const [keywordInput, setKeywordInput] = useState('');
   const [filteredKeywords, setFilteredKeywords] = useState([]);
@@ -710,7 +710,7 @@ export default function ProjectSearch() {
                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
                   <div>
                     <h2 className="text-lg sm:text-xl font-semibold text-gray-800">
-                      Showing {getPaginatedResults().length} of {results.length} projects
+                      Showing {getPaginatedResults().length} of {results.length} top matched projects
                     </h2>
                     {query.trim() !== '' && results.filter(p => p.score >= 0.5).length === 0 && (
                       <div className="text-red-600 text-sm flex items-center mt-1">
