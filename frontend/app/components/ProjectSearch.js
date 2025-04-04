@@ -337,11 +337,16 @@ export default function ProjectSearch() {
     }
   }, [initialFetch, topK]);
 
-  // Load recent searches from local storage
+  // Load recent searches and shortlist from local storage
   useEffect(() => {
     const savedSearches = localStorage.getItem("recentSearches");
     if (savedSearches) {
       setRecentSearches(JSON.parse(savedSearches));
+    }
+    
+    const savedShortlist = localStorage.getItem("fypShortlist");
+    if (savedShortlist) {
+      setShortlist(JSON.parse(savedShortlist));
     }
   }, []);
 
@@ -560,19 +565,25 @@ export default function ProjectSearch() {
   const toggleShortlist = (projectNo) => {
     const isRemoving = shortlist.includes(projectNo);
     
+    let updatedShortlist;
     if (isRemoving) {
-      setShortlist(shortlist.filter((id) => id !== projectNo));
+      updatedShortlist = shortlist.filter((id) => id !== projectNo);
+      setShortlist(updatedShortlist);
       // Track removal from shortlist
       posthog.capture('shortlist_remove', {
         projectNo: projectNo
       });
     } else {
-      setShortlist([...shortlist, projectNo]);
+      updatedShortlist = [...shortlist, projectNo];
+      setShortlist(updatedShortlist);
       // Track addition to shortlist
       posthog.capture('shortlist_add', {
         projectNo: projectNo
       });
     }
+    
+    // Save to localStorage
+    localStorage.setItem("fypShortlist", JSON.stringify(updatedShortlist));
   };
 
   // Get paginated and sorted results
@@ -1525,7 +1536,10 @@ export default function ProjectSearch() {
               {shortlist.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setShortlist([])}
+                  onClick={() => {
+                    setShortlist([]);
+                    localStorage.removeItem("fypShortlist");
+                  }}
                   className="text-red-600 hover:text-red-800 text-sm flex items-center"
                 >
                   <X size={14} className="mr-1" />
