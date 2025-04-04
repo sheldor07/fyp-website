@@ -225,6 +225,12 @@ export default function ProjectSearch() {
   // Shortlist state
   const [shortlist, setShortlist] = useState([]);
   const [showShortlist, setShowShortlist] = useState(false);
+  
+  // Shabdify integration - search limit tracking
+  const [searchCount, setSearchCount] = useState(0);
+  const [searchLimit, setSearchLimit] = useState(5); // Configurable: number of searches before showing Shabdify
+  const [showShabdify, setShowShabdify] = useState(false);
+  const [shabdifyTimer, setShabdifyTimer] = useState(30); // Countdown timer in seconds (20s)
 
   const resultsPerPage = 10;
   const supervisorRef = useRef(null);
@@ -337,7 +343,7 @@ export default function ProjectSearch() {
     }
   }, [initialFetch, topK]);
 
-  // Load recent searches and shortlist from local storage
+  // Load recent searches, shortlist, and search count from local storage
   useEffect(() => {
     const savedSearches = localStorage.getItem("recentSearches");
     if (savedSearches) {
@@ -348,11 +354,84 @@ export default function ProjectSearch() {
     if (savedShortlist) {
       setShortlist(JSON.parse(savedShortlist));
     }
+    
+    // Load search count from localStorage
+    const savedSearchCount = localStorage.getItem("shabdifySearchCount");
+    if (savedSearchCount) {
+      setSearchCount(parseInt(savedSearchCount, 10));
+    }
   }, []);
+  
+  // Add window message listener for iframe communication
+  useEffect(() => {
+    function handleReceivedMessage(event) {
+      // Make sure the message is from our Shabdify game
+      if (event.origin !== "https://shabdify.com") return;
+      
+      // Handle message from shabdify iframe
+      if (event.data && event.data.type === "gameCompleted") {
+        setShowShabdify(false);
+        setSearchCount(0); // Reset counter after playing
+        localStorage.setItem("shabdifySearchCount", "0");
+        // Track game completion in PostHog
+        posthog.capture('shabdify_game_completed', event.data);
+      }
+    }
+    
+    // Add event listener
+    window.addEventListener("message", handleReceivedMessage);
+    
+    // Remove event listener on cleanup
+    return () => {
+      window.removeEventListener("message", handleReceivedMessage);
+    };
+  }, []);
+  
+  // Timer effect for Shabdify countdown
+  useEffect(() => {
+    let timer;
+    
+    // Only run timer when Shabdify is shown
+    if (showShabdify && shabdifyTimer > 0) {
+      timer = setInterval(() => {
+        setShabdifyTimer(prev => prev - 1);
+      }, 1000);
+    }
+    
+    // Reset timer when Shabdify is closed
+    if (!showShabdify) {
+      setShabdifyTimer(20); // Reset to initial value
+    }
+    
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [showShabdify, shabdifyTimer]);
+  
+  // Show warning when user is on their last search
+  const showLastSearchWarning = searchLimit - searchCount === 1;
 
   // Search handler - connected to the API
   let handleSearch = async (e) => {
     if (e) e.preventDefault();
+    
+    // Check if user is performing a search with a query (not just a filter change)
+    if (query.trim()) {
+      // Increment search count for Shabdify integration
+      const newSearchCount = searchCount + 1;
+      setSearchCount(newSearchCount);
+      localStorage.setItem("shabdifySearchCount", newSearchCount.toString());
+      
+      // Show Shabdify game if search limit is reached
+      if (newSearchCount >= searchLimit && !showShabdify) {
+        setShowShabdify(true);
+        // Track when search limit is reached
+        posthog.capture('shabdify_limit_reached', {
+          searchCount: newSearchCount,
+          limit: searchLimit
+        });
+      }
+    }
 
     setLoading(true);
     setError(null);
@@ -452,6 +531,22 @@ export default function ProjectSearch() {
     setQuery(searchQuery);
     // Set hasSearched to true immediately
     setHasSearched(true);
+
+    // Increment search count for predefined prompts
+    const newSearchCount = searchCount + 1;
+    setSearchCount(newSearchCount);
+    localStorage.setItem("shabdifySearchCount", newSearchCount.toString());
+    
+    // Show Shabdify game if search limit is reached
+    if (newSearchCount >= searchLimit && !showShabdify) {
+      setShowShabdify(true);
+      // Track when search limit is reached
+      posthog.capture('shabdify_limit_reached', {
+        searchCount: newSearchCount,
+        limit: searchLimit,
+        source: 'predefined_prompt'
+      });
+    }
 
     // Capture event for clicking a recent search
     posthog.capture('recent_search_click', {
@@ -681,6 +776,12 @@ export default function ProjectSearch() {
                         className="absolute left-3 top-3.5 text-gray-400"
                         size={18}
                       />
+                      
+                      {searchLimit - searchCount > 0 && searchLimit - searchCount <= 3 && (
+                        <div className="absolute right-24 sm:right-28 top-3 bg-amber-50 border border-amber-200 px-2 py-1 rounded text-xs text-amber-700">
+                          {searchLimit - searchCount} search{searchLimit - searchCount !== 1 ? 'es' : ''} remaining
+                        </div>
+                      )}
 
                       <button
                         type="submit"
@@ -697,6 +798,17 @@ export default function ProjectSearch() {
                       </button>
                     </div>
 
+                    {/* Last search warning */}
+                    {showLastSearchWarning && (
+                      <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 flex items-start">
+                        <AlertCircle size={16} className="flex-shrink-0 mt-0.5 mr-2 text-amber-600" />
+                        <div>
+                          <p className="text-sm font-medium">This is your last search</p>
+                          <p className="text-xs">After this search, you'll need to play a quick word game to continue searching.</p>
+                        </div>
+                      </div>
+                    )}
+                    
                     {/* Sample prompts */}
                     <div className="mt-4 p-4 bg-gradient-to-r from-slate-50 to-blue-50 border border-blue-100 rounded-lg shadow-sm">
                       <p className="text-base font-medium text-gray-700 mb-3">
@@ -1142,6 +1254,133 @@ export default function ProjectSearch() {
               </form>
             </div>
 
+            {/* Shabdify Game Modal */}
+            {showShabdify && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-2 sm:p-4">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl overflow-hidden max-h-screen flex flex-col">
+                  {/* Mobile Header (visible on small screens) */}
+                  <div className="sm:hidden p-3 bg-indigo-50 border-b border-indigo-100">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center">
+                        <AlertCircle size={18} className="text-indigo-600 mr-2 flex-shrink-0" />
+                        <h4 className="font-medium text-indigo-800 text-sm">Play Shabdify to continue searching</h4>
+                      </div>
+                      {shabdifyTimer > 0 ? (
+                        <div className="flex items-center text-xs text-indigo-600">
+                          <span>{shabdifyTimer}s</span>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={() => setShowShabdify(false)}
+                          className="p-1.5 rounded-full hover:bg-indigo-100"
+                        >
+                          <X size={18} className="text-indigo-600" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Desktop Header with details (visible on medium screens and up) */}
+                  <div className="hidden sm:block p-4 bg-indigo-50 mb-2">
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="flex items-center">
+                        <AlertCircle size={20} className="text-indigo-600 mr-2" />
+                        <h4 className="font-medium text-indigo-800">You've reached your search limit!</h4>
+                      </div>
+                      {shabdifyTimer > 0 ? (
+                        <div className="flex items-center text-sm text-indigo-600">
+                          <span>Close in {shabdifyTimer}s</span>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={() => setShowShabdify(false)}
+                          className="p-2 rounded-full hover:bg-indigo-100"
+                        >
+                          <X size={20} className="text-indigo-600" />
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-sm text-indigo-700 mb-2">
+                      Play and complete Shabdify to get more searches. No shortcuts - you must find all 4 connection rules!
+                    </p>
+                    <div className="bg-white/100 rounded-lg p-3 text-sm text-indigo-900">
+                      <p className="font-medium mb-1">How to play:</p>
+                      <ol className="list-decimal pl-4 space-y-1">
+                        <li>Group the 16 words into 4 categories (4 words each)</li>
+                        <li>Find the connection rule for each category</li>
+                        <li>Complete all categories to unlock more searches</li>
+                      </ol>
+                    </div>
+                  </div>
+
+                  <div className="flex-grow overflow-hidden" id="shabdify-game-container">
+                    <iframe 
+                      src="https://shabdify.com/?source=fyp-search&embed=true"
+                      className="w-full min-h-[600px] sm:min-h-[600px] border-0"
+                      title="Shabdify Game"
+                      id="shabdify-frame"
+                    />
+                  </div>
+                  
+                  {/* Mobile Footer (visible on small screens) */}
+                  <div className="sm:hidden p-3 bg-gradient-to-r from-indigo-50 to-purple-50 border-t border-indigo-100 flex justify-between items-center">
+                    {shabdifyTimer > 0 ? (
+                      <span className="text-xs text-gray-500">Please wait {shabdifyTimer}s</span>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setShowShabdify(false);
+                          setSearchCount(0); // Reset counter manually
+                          localStorage.setItem("shabdifySearchCount", "0");
+                          posthog.capture('shabdify_manual_complete');
+                        }}
+                        className="px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 transition-all"
+                      >
+                        Skip & Continue
+                      </button>
+                    )}
+                    
+                    <span className="text-xs text-indigo-500">
+                      Powered by 
+                      <a href="https://shabdify.com" target="_blank" rel="noopener noreferrer" className="ml-1 hover:underline">Shabdify</a>
+                    </span>
+                  </div>
+                  
+                  {/* Desktop Footer (visible on medium screens and up) */}
+                  <div className="hidden sm:block p-4 bg-gradient-to-r from-indigo-50 to-purple-50 text-center">
+                    <p className="text-sm text-indigo-800 mb-3">
+                      Enjoy the game? The search limit will reset automatically when you complete it.
+                    </p>
+                    <div className="flex justify-center">
+                      {shabdifyTimer > 0 ? (
+                        <button
+                          disabled
+                          className="px-4 py-2 bg-gray-300 text-gray-600 rounded-lg cursor-not-allowed"
+                        >
+                          Please wait {shabdifyTimer}s to continue
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setShowShabdify(false);
+                            setSearchCount(0); // Reset counter manually
+                            localStorage.setItem("shabdifySearchCount", "0");
+                            posthog.capture('shabdify_manual_complete');
+                          }}
+                          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all"
+                        >
+                          Skip & Continue Searching
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Powered by <a href="https://shabdify.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">Shabdify</a>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {/* Error message */}
             {error && (
               <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded">
